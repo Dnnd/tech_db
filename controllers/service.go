@@ -1,10 +1,10 @@
 package controllers
 
 import (
-	"tpark_db/restapi/operations"
-	"tpark_db/database"
+	"github.com/Dnnd/tech_db/restapi/operations"
+	"github.com/Dnnd/tech_db/database"
 	"github.com/go-openapi/runtime/middleware"
-	"tpark_db/models"
+	"github.com/Dnnd/tech_db/models"
 )
 
 func ServiceClear(params operations.ClearParams) middleware.Responder {

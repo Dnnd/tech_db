@@ -1,9 +1,8 @@
 FROM ubuntu:rolling
 
-RUN apt update  && apt install -y postgresql-9.6 postgresql-client-9.6
+RUN apt update  && apt install -y postgresql-9.6
 
 USER postgres
-RUN echo 1
 RUN    /etc/init.d/postgresql start &&\
     psql --command "CREATE USER docker WITH SUPERUSER PASSWORD 'docker';" &&\
     createdb -O docker docker &&\
@@ -11,32 +10,34 @@ RUN    /etc/init.d/postgresql start &&\
 
 RUN echo "host all  all    0.0.0.0/0  md5" >> /etc/postgresql/9.6/main/pg_hba.conf
 RUN echo "listen_addresses='*'" >> /etc/postgresql/9.6/main/postgresql.conf
-
-VOLUME  ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
-
 EXPOSE 5432
-CMD ["/usr/lib/postgresql/9.6/bin/postgres", "-D", "/var/lib/postgresql/9.6/main", "-c", "config_file=/etc/postgresql/9.6/main/postgresql.conf"]
 
 USER root
 RUN apt install -y git wget
 RUN wget https://storage.googleapis.com/golang/go1.9.1.linux-amd64.tar.gz
-RUN tar -C /usr/local -xzf go1.9.linux-amd64.tar.gz && \
-    mkdir go && mkdir go/src && mkdir go/bin && mkdir go/pkg && \
-    mkdir go/src/
+
+RUN tar -C /usr/local -xzf go1.9.1.linux-amd64.tar.gz && \
+    mkdir -p go && mkdir -p go/src && mkdir -p go/bin && mkdir -p go/pkg && \
+    mkdir -p go/src/
 
 ENV GOPATH /root/go
-ENV GOROOT /usr/local.go
+ENV GOBIN /root/go/bin
+ENV PATH $PATH/bin:/root/go/bin:/usr/local/go/bin
 
-ENV PATH=${PATH}/bin:/usr/local/go/bin
+WORKDIR $GOPATH/src/github.com/Dnnd/tech_db
+ADD . $GOPATH/src/github.com/Dnnd/tech_db
+RUN go install ./vendor/github.com/go-swagger/go-swagger/cmd/swagger
+RUN swagger generate server --target . --name TechDbForum --spec swagger.yml
+RUN go install ./cmd/tech-db-forum-server/
 
-WORKDIR $GOPATH
-ADD /controllers $GOPATH/controllers
-ADD /database $GOPATH/database
-ADD /vendor $GOPATH/vendor
-ADD /restapi/configure_tech_db_forum.go $GOPATH/restapi/configure_tech_db_forum.go
-ADD migrations/ $GOPATH/migrations
+ENV PGHOST	localhost
+ENV PORT 5000
+ENV PGUSER docker
+ENV PGSSLMODE disable
+ENV PGDATABASE docker
+ENV PGPASSWORD docker
+EXPOSE 5000
 
-#CMD ./go/bin/tech_db
-
+CMD service postgresql start && tech-db-forum-server --scheme http
 
 

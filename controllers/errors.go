@@ -1,6 +1,6 @@
 package controllers
 
-import "tpark_db/models"
+import "github.com/Dnnd/tech_db/models"
 
 var (
 	NotFoundError = models.Error{"Not Found"}

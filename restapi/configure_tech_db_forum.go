@@ -9,9 +9,8 @@ import (
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	"github.com/tylerb/graceful"
-
-	"tpark_db/restapi/operations"
-	"tpark_db/controllers"
+	"github.com/Dnnd/tech_db/restapi/operations"
+	"github.com/Dnnd/tech_db/controllers"
 )
 
 // This file is safe to edit. Once it exists it will not be overwritten

@@ -1,12 +1,12 @@
 package controllers
 
 import (
-	"tpark_db/restapi/operations"
+	"github.com/Dnnd/tech_db/restapi/operations"
 	"github.com/go-openapi/runtime/middleware"
-	"tpark_db/database"
-	"tpark_db/models"
+	"github.com/Dnnd/tech_db/database"
+	"github.com/Dnnd/tech_db/models"
 	"database/sql"
-	"tpark_db/database/errors"
+	"github.com/Dnnd/tech_db/database/errors"
 )
 
 func CreateUser(params operations.UserCreateParams) middleware.Responder {

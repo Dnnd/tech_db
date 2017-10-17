@@ -1,12 +1,12 @@
 package controllers
 
 import (
-	"tpark_db/restapi/operations"
-	"tpark_db/database"
-	"tpark_db/database/errors"
+	"github.com/Dnnd/tech_db/restapi/operations"
+	"github.com/Dnnd/tech_db/database"
+	"github.com/Dnnd/tech_db/database/errors"
 	"github.com/go-openapi/runtime/middleware"
-	"tpark_db/models"
-	"tpark_db/database/wrappers"
+	"github.com/Dnnd/tech_db/models"
+	"github.com/Dnnd/tech_db/database/wrappers"
 	"database/sql"
 	"strconv"
 )

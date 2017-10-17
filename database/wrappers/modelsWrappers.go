@@ -1,7 +1,7 @@
 package wrappers
 
 import (
-	"tpark_db/models"
+	"github.com/Dnnd/tech_db/models"
 )
 
 type ForumWrapper struct {
