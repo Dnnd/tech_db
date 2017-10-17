@@ -1,4 +1,4 @@
-FROM ubuntu:rolling
+FROM ubuntu:17.04
 
 RUN apt update  && apt install -y postgresql-9.6
 
@@ -22,7 +22,7 @@ RUN tar -C /usr/local -xzf go1.9.1.linux-amd64.tar.gz && \
 
 ENV GOPATH /root/go
 ENV GOBIN /root/go/bin
-ENV PATH $PATH/bin:/root/go/bin:/usr/local/go/bin
+ENV PATH $PATH:/root/go/bin:/usr/local/go/bin
 
 WORKDIR $GOPATH/src/github.com/Dnnd/tech_db
 ADD . $GOPATH/src/github.com/Dnnd/tech_db
@@ -32,6 +32,7 @@ RUN go install ./cmd/tech-db-forum-server/
 
 ENV PGHOST	localhost
 ENV PORT 5000
+ENV HOST 0.0.0.0
 ENV PGUSER docker
 ENV PGSSLMODE disable
 ENV PGDATABASE docker

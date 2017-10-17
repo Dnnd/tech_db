@@ -6,13 +6,14 @@ import (
 	"strconv"
 	"github.com/Dnnd/tech_db/models"
 	"github.com/Dnnd/tech_db/database"
-	"database/sql"
+
 	"github.com/Dnnd/tech_db/database/errors"
 	"github.com/Dnnd/tech_db/database/wrappers"
 
 	"time"
 	"github.com/go-openapi/strfmt"
 	"fmt"
+	"database/sql"
 )
 
 func PostCreateMany(params operations.PostsCreateParams) middleware.Responder {
