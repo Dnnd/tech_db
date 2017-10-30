@@ -1,19 +1,22 @@
 FROM ubuntu:17.04
 
-RUN apt update  && apt install -y postgresql-9.6
+RUN apt update  && apt install -y  git wget
+
+
+RUN wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
+RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ zesty-pgdg main"> /etc/apt/sources.list.d/pgdg.list
+RUN apt update && apt install -y postgresql-10
 
 USER postgres
 RUN    /etc/init.d/postgresql start &&\
     psql --command "CREATE USER docker WITH SUPERUSER PASSWORD 'docker';" &&\
     createdb -O docker docker &&\
     /etc/init.d/postgresql stop
-
-RUN echo "host all  all    0.0.0.0/0  md5" >> /etc/postgresql/9.6/main/pg_hba.conf
-RUN echo "listen_addresses='*'" >> /etc/postgresql/9.6/main/postgresql.conf
+RUN echo "host all  all    0.0.0.0/0  md5" >> /etc/postgresql/10/main/pg_hba.conf
+RUN echo "listen_addresses='*'" >> /etc/postgresql/10/main/postgresql.conf
 EXPOSE 5432
 
 USER root
-RUN apt install -y git wget
 RUN wget https://storage.googleapis.com/golang/go1.9.1.linux-amd64.tar.gz
 
 RUN tar -C /usr/local -xzf go1.9.1.linux-amd64.tar.gz && \

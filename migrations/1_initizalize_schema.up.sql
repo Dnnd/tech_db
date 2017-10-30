@@ -234,12 +234,6 @@ CREATE TRIGGER users_rows_number
   FOR EACH STATEMENT
 EXECUTE PROCEDURE count_inserted_rows();
 
-CREATE TRIGGER posts_rows_number
-  AFTER INSERT
-  ON posts
-  FOR EACH STATEMENT
-EXECUTE PROCEDURE count_inserted_rows();
-
 CREATE TRIGGER threads_rows_number
   AFTER INSERT
   ON threads

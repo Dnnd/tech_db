@@ -25,7 +25,6 @@ func CreateUser(params operations.UserCreateParams) middleware.Responder {
 		return operations.NewUserCreateConflict().WithPayload(users)
 	}
 
-	//TODO: something to deal with concurrent INSERT
 	db.Exec(`INSERT INTO users
 					(about, email, fullname, nickname)
 					VALUES

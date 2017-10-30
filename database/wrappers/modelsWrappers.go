@@ -2,6 +2,7 @@ package wrappers
 
 import (
 	"github.com/Dnnd/tech_db/models"
+	"github.com/lib/pq"
 )
 
 type ForumWrapper struct {
@@ -18,7 +19,8 @@ type ThreadWrapper struct {
 	models.Thread
 }
 type PostWrapper struct {
-	ForumID  int `json:"forum_id"`
-	AuthorID int `json:"author_id"`
+	ForumID  int           `json:"forum_id"`
+	AuthorID int           `json:"author_id"`
+	Path     pq.Int64Array `json:"path"`
 	models.Post
 }
