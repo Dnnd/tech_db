@@ -21,6 +21,9 @@ func ServiceClear(params operations.ClearParams) middleware.Responder {
 func ServiceStatus(params operations.StatusParams) middleware.Responder {
 	db := database.DB
 	status := models.Status{}
-	db.Get(&status, `SELECT forum, post, "user", thread FROM status WHERE id = 0`)
+	db.Get(&status, `SELECT forum, "user", thread, p.num as post
+	FROM status,
+	 (SELECT count(*) as num from posts) as p
+	WHERE id = 0`)
 	return operations.NewStatusOK().WithPayload(&status)
 }

@@ -8,10 +8,11 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS forums (
-  id      SERIAL PRIMARY KEY,
-  slug    CITEXT UNIQUE NOT NULL,
-  user_id INTEGER REFERENCES users (id),
-  title   VARCHAR(255)  NOT NULL
+  id        SERIAL PRIMARY KEY,
+  slug      CITEXT UNIQUE NOT NULL,
+  user_id   INTEGER REFERENCES users (id),
+  title     VARCHAR(255)  NOT NULL,
+  posts_count INT           NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS threads (
@@ -32,16 +33,15 @@ CREATE TABLE IF NOT EXISTS posts (
   created   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   is_edited BOOLEAN                  NOT NULL DEFAULT FALSE,
   message   TEXT                     NOT NULL,
+  parent    INTEGER                  NOT NULL,
   path      INTEGER []               NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS votes (
-  id        SERIAL PRIMARY KEY,
   thread_id INTEGER REFERENCES threads (id),
   user_id   INTEGER REFERENCES users (id),
   voice     INTEGER NOT NULL,
-  CONSTRAINT one_voice_per_user UNIQUE (thread_id, user_id)
-
+  CONSTRAINT votes_pkey PRIMARY KEY (thread_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS status (
@@ -93,7 +93,7 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION get_parent(
   IN  path      INT [],
-  OUT parent_id INT)
+  OUT parent_id INT)  IMMUTABLE
 AS $$
 DECLARE arr_len INT;
 BEGIN
@@ -105,6 +105,15 @@ BEGIN
     parent_id = path [arr_len - 1];
     RETURN;
   END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_root(
+  IN  path      INT [],
+  OUT root_id INT)  IMMUTABLE
+AS $$
+BEGIN
+  root_id = path[1];
 END;
 $$ LANGUAGE plpgsql;
 

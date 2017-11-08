@@ -7,7 +7,6 @@ import (
 	"github.com/Dnnd/tech_db/models"
 	"github.com/Dnnd/tech_db/database"
 
-	"github.com/Dnnd/tech_db/database/errors"
 	"github.com/Dnnd/tech_db/database/wrappers"
 
 	"github.com/go-openapi/strfmt"
@@ -15,6 +14,9 @@ import (
 	"bytes"
 	"github.com/lib/pq"
 	"github.com/Dnnd/tech_db/utils"
+	"sort"
+	"github.com/jmoiron/sqlx"
+	"strings"
 )
 
 func PostCreateMany(params operations.PostsCreateParams) middleware.Responder {
@@ -46,53 +48,84 @@ func PostCreateMany(params operations.PostsCreateParams) middleware.Responder {
 		return operations.NewPostsCreateCreated().WithPayload(models.Posts{})
 	}
 	posts := params.Posts
-	args := make([]interface{}, 0, len(posts)*7)
-	getPostFromDb, _ := tx.Preparex(`
-		SELECT
-			COALESCE(id_path.self_id, -1) as id,
-			author_cred.id as author_id,
-			COALESCE(author_cred.nickname, '') as author,
-			id_path.path
-		FROM
-			(SELECT nickname, id FROM users WHERE nickname = $1) as author_cred,
-			(SELECT self_id, path FROM build_path(COALESCE($2, 0), $3::integer)) as id_path`)
-	for _, post := range posts {
-		postWrapper := &wrappers.PostWrapper{}
+	usersData := make([]struct {
+		Id       int
+		Nickname string
+	}, 0, len(posts))
 
-		getPostFromDb.Get(postWrapper, post.Author, post.Parent, thread.ID)
-		if postWrapper.ID == -1 {
-			tx.Rollback()
-			return operations.NewPostsCreateConflict().WithPayload(&models.Error{"Conflict"})
+	postData := make([]struct {
+		ParentId int64
+		Path     pq.Int64Array
+	}, 0, len(posts))
+
+	idSource, _ := tx.Queryx(`SELECT nextval('posts_id_seq'::REGCLASS) AS id
+	FROM generate_series(1, $1)`, len(posts))
+	defer idSource.Close()
+	for _, post := range posts {
+		idSource.Next()
+		idSource.Scan(&post.ID)
+	}
+	idSource.Close()
+
+	parents := make([]int64, 0, len(posts))
+
+	for _, post := range posts {
+		parents = append(parents, post.Parent)
+	}
+
+	tx.Select(&usersData, `SELECT id, nickname FROM users ORDER by nickname`)
+	query, args, _ := sqlx.In(`
+	SELECT  path, posts.id as parentid
+	FROM posts
+	WHERE posts.thread_id = ? AND posts.id IN (?)
+	ORDER by posts.id;`, thread.ID, parents)
+	query = tx.Rebind(query)
+	tx.Select(&postData, query, args...)
+
+	insertArgs := make([]interface{}, 0, len(posts)*8)
+	for _, post := range posts {
+
+		path := pq.Int64Array{post.ID}
+		if post.Parent != 0 {
+			postIdx := sort.Search(len(postData), func(i int) bool { return postData[i].ParentId >= post.Parent })
+			if postIdx >= len(postData) || postData[postIdx].ParentId != post.Parent {
+				tx.Rollback()
+				return operations.NewPostsCreateConflict().WithPayload(&models.Error{"Conflict"})
+			}
+			path = append(postData[postIdx].Path, post.ID)
 		}
-		if postWrapper.Author == "" {
+
+		authorIdx := sort.Search(len(usersData), func(i int) bool { return strings.ToLower(usersData[i].Nickname) >= strings.ToLower(post.Author) })
+		if authorIdx >= len(usersData) || strings.ToLower(usersData[authorIdx].Nickname) != strings.ToLower(post.Author) {
 			tx.Rollback()
 			return operations.NewPostsCreateNotFound().WithPayload(&NotFoundError)
 		}
-		post.ID = postWrapper.ID
-		post.Author = postWrapper.Author
+
+		post.Author = usersData[authorIdx].Nickname
 		post.Forum = thread.Forum
 		post.Thread = thread.ID
 		if post.Created == nil {
 			post.Created = &dbtime
 		}
-		args = append(args,
+		insertArgs = append(insertArgs,
 			post.ID,
 			forumId,
 			post.Thread,
-			postWrapper.AuthorID,
+			usersData[authorIdx].Id,
 			post.Message,
-			pq.Array(postWrapper.Path),
-			post.Created)
+			path,
+			post.Created,
+			post.Parent)
 	}
-	insertAll := bytes.NewBufferString(`INSERT INTO posts (id, forum_id, thread_id, author_id, "message", path, created) VALUES ($1,$2,$3,$4,$5,$6,$7)`)
-	for i := 8; i <= len(args); i += 7 {
-		insertAll.WriteString(fmt.Sprintf(",($%d,$%d,$%d,$%d,$%d,$%d,$%d)", i, i+1, i+2, i+3, i+4, i+5, i+6))
+	insertAll := bytes.NewBufferString(`INSERT INTO posts (id, forum_id, thread_id, author_id, "message", path, created, parent) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`)
+	for i := 9; i <= len(insertArgs); i += 8 {
+		insertAll.WriteString(fmt.Sprintf(",($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)", i, i+1, i+2, i+3, i+4, i+5, i+6, i+7))
 	}
-	if _, err := tx.Exec(insertAll.String(), args...); errors.CheckForeginKeyViolation(err) || err != nil {
+	if _, err := tx.Exec(insertAll.String(), insertArgs...); err != nil {
 		tx.Rollback()
 		return operations.NewPostsCreateNotFound().WithPayload(&NotFoundError)
 	}
-	tx.Exec("; UPDATE status SET post = post + $1", len(posts))
+	tx.MustExec(`UPDATE forums SET posts_count = posts_count + $1 WHERE id = $2`, len(posts), forumId)
 	tx.Commit()
 	return operations.NewPostsCreateCreated().WithPayload(posts)
 }
@@ -112,7 +145,7 @@ func PostGetOne(params operations.PostGetOneParams) middleware.Responder {
 			posts.message,
 			posts.is_edited as "isEdited",
 			posts.id,
-			get_parent(posts.path) as parent,
+			posts.parent,
 			forums.slug as forum,
 			users.nickname as author
 			FROM
@@ -140,61 +173,46 @@ func PostGetOne(params operations.PostGetOneParams) middleware.Responder {
 				postFull.Forum = &models.Forum{}
 				db.Get(postFull.Forum, `
 				SELECT
-				  forums_ext.id,
-				  forums_ext.slug,
-				  forums_ext.title,
-				  forums_ext.threads,
-	  		      forums_ext."user",
-				  count(CASE WHEN posts.id IS NOT NULL THEN 1 END) as "posts"
-				FROM (
-					   SELECT
-						 forums.id,
-						 forums.slug,
-						 forums.title,
-						 users.nickname AS "user",
-						 count(CASE WHEN threads.id IS NOT NULL
-						   THEN 1 END)  AS "threads"
-					   FROM forums
-						 JOIN users ON (forums.user_id = users.id AND forums.id = $1)
-						 LEFT JOIN threads ON (forums.id = threads.forum_id AND threads.forum_id = $1)
-
-					   GROUP BY forums.id, forums.slug, forums.title, users.nickname
-					 ) AS forums_ext
-				  LEFT JOIN posts ON (forums_ext.id = posts.forum_id)
-				WHERE posts.forum_id =  $1
-				GROUP BY forums_ext.id,
-				  forums_ext.slug,
-				  forums_ext.title,
-				   forums_ext."user",
-				  forums_ext.threads
+				  forums.slug,
+				  forums.title,
+				  t.tt as "threads",
+				  forums.posts_count as "posts",
+				  u.nickname as "user"
+				FROM (SELECT
+						count(*) as tt
+					  FROM threads
+					  WHERE threads.forum_id = $1
+					 ) as t,
+				  forums JOIN users u ON forums.user_id = u.id
+				WHERE forums.id = $1
 				`, post.ForumID)
+
 			}
 		case "thread":
 			{
 				postFull.Thread = &models.Thread{}
 				db.Get(postFull.Thread, `
 				SELECT
-					th.*,
-					users.nickname as "author",
-					forums.slug as "forum"
+				  threads.id,
+				  threads.author_id,
+				  threads.forum_id,
+				  threads."message",
+				  threads.created,
+				  threads.title,
+				  COALESCE(threads.slug, '') as "slug",
+				  users.nickname AS "author",
+				  forums.slug AS "forum",
+				  v.votes
 				FROM (
-					SELECT
-					threads.id,
-					threads.author_id,
-					threads.forum_id,
-					threads."message",
-					threads.created,
-					threads.title,
-					COALESCE(threads.slug, '') as "slug",
-					COALESCE(SUM(votes.voice), 0) as "votes"
-					FROM threads
-					LEFT JOIN votes
-					ON (threads.id = votes.thread_id)
-					WHERE threads.id = $1
-					GROUP BY threads.id, threads."message", threads.created, threads.title, threads."slug"
-				) as th
-				JOIN users ON (th.author_id = users.id)
-				JOIN forums ON (th.forum_id = forums.id)
+					   SELECT
+						COALESCE(SUM(votes.voice), 0) AS "votes"
+					   FROM  votes
+					   WHERE votes.thread_id = $1
+					 ) AS v,
+				  threads
+				  JOIN users ON (threads.author_id = users.id)
+				  JOIN forums ON (threads.forum_id = forums.id)
+				WHERE threads.id = $1
 				`, post.Thread)
 			}
 		}
@@ -225,7 +243,7 @@ func PostUpdate(params operations.PostUpdateParams) middleware.Responder {
 			updated.message,
 			updated.is_edited as "isEdited",
 			updated.id,
-			get_parent(updated.path) as parent,
+			updated.parent,
 			forums.slug as forum,
 			users.nickname as author
 			FROM
@@ -251,50 +269,56 @@ func ThreadsGetPosts(params operations.ThreadGetPostsParams) middleware.Responde
 		sortOrder = "DESC"
 		isDesc = true
 	}
-	sort := *params.Sort
-	threadID, _ := strconv.Atoi(params.SlugOrID)
-	if err := db.Get(&threadID, `SELECT id FROM threads WHERE id = $1 or slug = $2`, threadID, params.SlugOrID);
-		err != nil {
-		return operations.NewThreadGetPostsNotFound().WithPayload(&NotFoundError)
+	sortType := *params.Sort
+
+	queryBuff := &bytes.Buffer{}
+	gotId := true
+	_, err := strconv.Atoi(params.SlugOrID)
+	if err != nil {
+		gotId = false
+		queryBuff.WriteString(`WITH in_thread_id as (SELECT id FROM threads WHERE slug = $2) `)
+	} else {
+		queryBuff.WriteString(`WITH in_thread_id as (SELECT $2::int as id) `)
 	}
 
-	switch sort {
+	switch sortType {
 	default:
 		fallthrough
 	case "flat":
-		queryBuff := bytes.Buffer{}
 		queryBuff.WriteString(`
 				SELECT
-				posts.author_id,
-					posts.forum_id,
-					posts.thread_id as thread,
-				posts.created,
-				posts.message,
-				posts.is_edited as "isEdited",
-				posts.id,
-				get_parent(posts.path) as parent,
-				forums.slug as forum,
-				users.nickname as author
+				  posts.author_id,
+				  posts.forum_id,
+				  posts.thread_id        AS thread,
+				  posts.created,
+				  posts.message,
+				  posts.is_edited        AS "isEdited",
+				  posts.id,
+				  posts.parent,
+				  f.slug                 AS forum,
+				  users.nickname         AS author
 				FROM
-				posts
-				JOIN users ON (posts.author_id = users.id)
-				JOIN forums ON (posts.forum_id = forums.id)
-				JOIN threads on (posts.thread_id = threads.id)
-				WHERE posts.thread_id = $2`)
+				  posts
+				  JOIN forums f ON (posts.forum_id = f.id)
+				  JOIN users ON (posts.author_id = users.id)
+		 		WHERE posts.thread_id = (SELECT id from in_thread_id) `)
+
 		if params.Since != nil {
-			utils.GenCompareCondition(&queryBuff, "AND", isDesc, "posts.id", "$3")
+			utils.GenStrictCompareCondition(queryBuff, "AND", isDesc, "posts.id", "$3")
 		}
-		queryBuff.WriteString(" ORDER BY (posts.created , posts.id) ")
+		queryBuff.WriteString("ORDER BY (posts.created , posts.id) ")
 		queryBuff.WriteString(sortOrder)
 		queryBuff.WriteString(" LIMIT $1")
 		if params.Since != nil {
-			db.Select(&posts, queryBuff.String(), params.Limit, threadID, params.Since)
+			db.Select(&posts, queryBuff.String(), params.Limit, params.SlugOrID, params.Since)
+
 		} else {
-			db.Select(&posts, queryBuff.String(), params.Limit, threadID)
+			db.Select(&posts, queryBuff.String(), params.Limit, params.SlugOrID)
+
 		}
 	case "tree":
-		db.Select(&posts, fmt.Sprintf(`
-		WITH since_parent AS ( SELECT path, get_parent(path) as id
+		queryBuff.WriteString(`
+		,since_parent AS (SELECT path, parent as id
 							   FROM posts
 							   WHERE id = $3)
 		SELECT
@@ -305,7 +329,7 @@ func ThreadsGetPosts(params operations.ThreadGetPostsParams) middleware.Responde
 		  posts.message,
 		  posts.is_edited        AS "isEdited",
 		  posts.id,
-		  get_parent(posts.path) AS parent,
+		  posts.parent,
 		  forums.slug            AS forum,
 		  users.nickname         AS author
 		FROM
@@ -313,54 +337,68 @@ func ThreadsGetPosts(params operations.ThreadGetPostsParams) middleware.Responde
 		  JOIN users ON (posts.author_id = users.id)
 		  JOIN forums ON (posts.forum_id = forums.id)
 		  JOIN threads ON (posts.thread_id = threads.id)
-		WHERE (
-				(get_parent(path) = (SELECT id FROM since_parent)  AND dynamic_less($2, posts.id, $3))
-				OR dynamic_less($2,path, (SELECT path FROM since_parent))
-			  )
-			  AND posts.thread_id = $4
-		ORDER BY (posts.path, posts.id) %s
-		LIMIT $1
-		`, sortOrder), params.Limit, isDesc, params.Since, threadID)
+		WHERE posts.thread_id = (SELECT id from in_thread_id) `)
+		if params.Since != nil {
+			utils.GenStrictCompareCondition(queryBuff, "AND ", isDesc, "path", "(SELECT path FROM since_parent)")
+		}
+		queryBuff.WriteString(" ORDER BY (posts.path, posts.id) ")
+		queryBuff.WriteString(sortOrder)
+		queryBuff.WriteString(" LIMIT $1")
+		db.Select(&posts, queryBuff.String(), params.Limit, params.SlugOrID, params.Since)
+
 	case "parent_tree":
-		db.Select(&posts, fmt.Sprintf(`
-		WITH since_parent AS ( SELECT path, get_parent(path) as id
+		queryBuff.WriteString(
+			`, since_parent AS ( SELECT path, parent as id
 							   FROM posts
-							   WHERE id = $3)
+							   WHERE id = $1)
 		SELECT
 		  posts.author_id,
 		  posts.forum_id,
-		  posts.thread,
+		  posts.thread_id as thread,
 		  posts.created,
 		  posts.message,
-		  posts."isEdited",
+		  posts.is_edited as "isEdited",
 		  posts.id,
-		  get_parent(posts.path) AS parent,
+		  posts.parent,
 		  forums.slug            AS forum,
 		  users.nickname         AS author
 		FROM
-		  (SELECT posts.author_id,
-			 posts.forum_id,
-			 posts.thread_id        AS thread,
-			 posts.created,
-			 posts.message,
-			 posts.is_edited        AS "isEdited",
+		  (SELECT
 			 posts.id,
-			 posts.path,
-			 dense_rank() OVER (ORDER BY path[1] %s) as dr
+			 dense_rank() OVER ( ORDER BY get_root(posts.path) `)
+		queryBuff.WriteString(sortOrder)
+		queryBuff.WriteString(`) as dr
 			FROM posts
-			WHERE  posts.thread_id = $4
-		 	AND (
-				(get_parent(path) = (SELECT id FROM since_parent)  AND dynamic_less($2, posts.id, $3))
-				OR dynamic_less($2,path, (SELECT path FROM since_parent))
-			  )
-		  ) as posts
+			WHERE  posts.thread_id = (SELECT id from in_thread_id)
+		 	`)
+		if params.Since != nil {
+			utils.GenStrictCompareCondition(queryBuff, " AND", isDesc, "path", "(SELECT path FROM since_parent)")
+		}
+		queryBuff.WriteString(`) as p
+		  JOIN posts ON (posts.id = p.id)
 		  JOIN users ON (posts.author_id = users.id)
 		  JOIN forums ON (posts.forum_id = forums.id)
-		  JOIN threads ON (posts.thread = threads.id)
-		  WHERE posts.dr <= $1
-		ORDER BY (posts.path, posts.id) %s
-		`, sortOrder, sortOrder), params.Limit, isDesc, params.Since, threadID)
-	}
+		  JOIN threads ON (posts.thread_id = threads.id)
+		  WHERE posts.thread_id = (SELECT id from in_thread_id)`)
+		if params.Limit != nil {
+			queryBuff.WriteString(` AND p.dr <= $3`)
+		}
+		queryBuff.WriteString(` ORDER BY (posts.path, posts.id) `)
+		queryBuff.WriteString(sortOrder)
+		db.Select(&posts, queryBuff.String(),
+			params.Since, params.SlugOrID, params.Limit)
 
+	}
+	if len(posts) == 0 {
+		thid := -1
+		if gotId {
+			db.Get(&thid, "SELECT id FROM threads WHERE id = $1::int", params.SlugOrID)
+		} else {
+			db.Get(&thid, "SELECT id FROM threads WHERE slug = $1", params.SlugOrID)
+		}
+		if thid == -1 {
+			return operations.NewThreadGetPostsNotFound().WithPayload(&NotFoundError)
+		}
+	}
 	return operations.NewThreadGetPostsOK().WithPayload(posts)
 }

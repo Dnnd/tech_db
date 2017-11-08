@@ -5,7 +5,6 @@ package restapi
 import (
 	"crypto/tls"
 	"net/http"
-
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	"github.com/tylerb/graceful"
@@ -30,7 +29,6 @@ func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 	//
 	// Example:
 	// api.Logger = log.Printf
-
 	api.JSONConsumer = runtime.JSONConsumer()
 
 	api.BinConsumer = runtime.ByteStreamConsumer()
@@ -47,6 +45,7 @@ func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 	api.PostGetOneHandler = operations.PostGetOneHandlerFunc(controllers.PostGetOne)
 
 	api.PostUpdateHandler = operations.PostUpdateHandlerFunc(controllers.PostUpdate)
+
 	api.PostsCreateHandler = operations.PostsCreateHandlerFunc(controllers.PostCreateMany)
 	api.StatusHandler = operations.StatusHandlerFunc(controllers.ServiceStatus)
 	api.ThreadCreateHandler = operations.ThreadCreateHandlerFunc(controllers.ThreadCreate)
@@ -60,7 +59,10 @@ func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 	api.UserCreateHandler = operations.UserCreateHandlerFunc(controllers.CreateUser)
 	api.UserGetOneHandler = operations.UserGetOneHandlerFunc(controllers.UserGetOne)
 	api.UserUpdateHandler = operations.UserUpdateHandlerFunc(controllers.UpdateUser)
-	api.ServerShutdown = func() {}
+
+	api.ServerShutdown = func() {
+
+	}
 
 	return setupGlobalMiddleware(api.Serve(setupMiddlewares))
 }
@@ -74,12 +76,14 @@ func configureTLS(tlsConfig *tls.Config) {
 // If you need to modify a config, store server instance to stop it individually later, this is the place.
 // This function can be called multiple times, depending on the number of serving schemes.
 // scheme value will be set accordingly: "http", "https" or "unix"
-func configureServer(s *graceful.Server, scheme, addr string) {
+func configureServer(s *graceful.Server, scheme, addr string){
+
 }
 
 // The middleware configuration is for the handler executors. These do not apply to the swagger.json document.
 // The middleware executes after routing but before authentication, binding and validation
 func setupMiddlewares(handler http.Handler) http.Handler {
+
 	return handler
 }
 

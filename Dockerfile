@@ -9,12 +9,11 @@ RUN apt update && apt install -y postgresql-10
 
 USER postgres
 RUN    /etc/init.d/postgresql start &&\
-    psql --command "CREATE USER docker WITH SUPERUSER PASSWORD 'docker';" &&\
+    psql --command " CREATE USER docker WITH SUPERUSER PASSWORD 'docker';" &&\
     createdb -O docker docker &&\
     /etc/init.d/postgresql stop
-RUN echo "host all  all    0.0.0.0/0  md5" >> /etc/postgresql/10/main/pg_hba.conf
-RUN echo "listen_addresses='*'" >> /etc/postgresql/10/main/postgresql.conf
-EXPOSE 5432
+RUN echo "local all  all  md5" >> /etc/postgresql/10/main/pg_hba.conf
+RUN echo "unix_socket_directories='/tmp,/var/run/postgresql_sock'" >> /etc/postgresql/10/main/postgresql.conf
 
 USER root
 RUN wget https://storage.googleapis.com/golang/go1.9.1.linux-amd64.tar.gz
@@ -40,8 +39,10 @@ ENV PGUSER docker
 ENV PGSSLMODE disable
 ENV PGDATABASE docker
 ENV PGPASSWORD docker
-EXPOSE 5000
+ENV PGHOST /var/run/postgresql_sock
 
+EXPOSE 5000
+RUN mkdir -p /var/run/postgresql_sock && chown postgres:postgres /var/run/postgresql_sock
 CMD service postgresql start && tech-db-forum-server --scheme http
 
 

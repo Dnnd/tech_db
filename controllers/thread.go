@@ -6,66 +6,60 @@ import (
 	"github.com/Dnnd/tech_db/database/errors"
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/Dnnd/tech_db/models"
-	"github.com/Dnnd/tech_db/database/wrappers"
 	"database/sql"
 	"strconv"
+	"bytes"
 )
 
 func ThreadCreate(params operations.ThreadCreateParams) middleware.Responder {
-	slug := params.Slug
 	thread := params.Thread
 
 	db := database.DB.Unsafe()
 
 	threadFromDb := &models.Thread{}
-
-	forum := &wrappers.ForumWrapper{}
-	user := &wrappers.UserWrapper{}
 	if err := db.Get(threadFromDb, `
-			SELECT
-			th.*,
-			users.nickname as "author",
-			forums.slug as "forum"
+		SELECT
+		  threads.id,
+		  threads.author_id,
+		  threads.forum_id,
+		  threads."message",
+		  threads.created,
+		  threads.title,
+		  COALESCE(threads.slug, '') as "slug",
+		  users.nickname AS "author",
+		  forums.slug AS "forum",
+		  v.votes
 		FROM (
-			SELECT
-			threads.id,
-			threads.author_id,
-			threads.forum_id,
-			threads."message",
-			threads.created,
-			threads.title,
-			COALESCE(threads.slug, '') as "slug",
-			COALESCE(SUM(votes.voice), 0) as "votes"
-			FROM threads
-			LEFT JOIN votes
-			ON (threads.id = votes.thread_id)
-			WHERE threads.id = $1 or slug = $2
-			GROUP BY threads.id, threads."message", threads.created, threads.title, threads."slug"
-		) as th
-		JOIN users ON (th.author_id = users.id)
-		JOIN forums ON (th.forum_id = forums.id)
+			   SELECT
+				COALESCE(SUM(votes.voice), 0) AS "votes"
+			   FROM  votes
+			   WHERE votes.thread_id = $1
+			 ) AS v,
+		  threads
+		  JOIN users ON (threads.author_id = users.id)
+		  JOIN forums ON (threads.forum_id = forums.id)
+		WHERE threads.id = $1 or threads.slug = $2
 		`, thread.ID, thread.Slug);
 		err != sql.ErrNoRows {
 		thread.ID = threadFromDb.ID
 		return operations.NewThreadCreateConflict().WithPayload(threadFromDb)
 	}
-
-	isForumExists := db.Get(forum, `SELECT id, slug FROM forums where slug = $1`, slug) != sql.ErrNoRows
-	isUserExists := db.Get(user, `SELECT id, nickname FROM users where nickname = $1`, thread.Author) != sql.ErrNoRows
-
-	if !isForumExists || !isUserExists {
+	var fid, uid int
+	res := db.QueryRowx(`
+		SELECT u.*,	f.*
+		FROM (SELECT id, slug FROM forums WHERE slug = $1) as f,
+		(SELECT id, nickname from users WHERE nickname = $2) as u
+	`, params.Slug, thread.Author)
+	if err := res.Scan(&uid, &thread.Author, &fid, &thread.Forum);
+		err != nil {
 		return operations.NewForumCreateNotFound().WithPayload(&NotFoundError)
 	}
-	thread.Author = user.Nickname
-	thread.Forum = forum.Slug
-
-	//TODO: something to deal with concurrent INSERT
 
 	result := db.QueryRowx(`
 				   INSERT INTO threads(forum_id,author_id,created,"message", slug, title )
- 				   VALUES ($1,$2, COALESCE($3, now()), $4, NULLIF($5,''), $6)
+ 				   VALUES ($1, $2, COALESCE($3, now()), $4, NULLIF($5,''), $6)
  				   RETURNING id, created
- 				  `, forum.ID, user.ID, thread.Created, thread.Message, thread.Slug, thread.Title)
+ 				  `, fid, uid, thread.Created, thread.Message, thread.Slug, thread.Title)
 
 	if err := result.Scan(&thread.ID, &thread.Created);
 		errors.CheckForeginKeyViolation(err) {
@@ -77,38 +71,50 @@ func ThreadCreate(params operations.ThreadCreateParams) middleware.Responder {
 
 func ThreadGetOne(params operations.ThreadGetOneParams) middleware.Responder {
 	slugOrId := params.SlugOrID
-	threadId := -1
-	if id, err := strconv.Atoi(slugOrId); err == nil {
-		threadId = id
-		slugOrId = ""
+	gotId := false
+	compareCondition := " WHERE threads.slug = $1"
+	queryBuff := bytes.Buffer{}
+	if _, err := strconv.Atoi(slugOrId); err == nil {
+		compareCondition = " WHERE threads.id = $1::int"
+		gotId = true
+	} else {
+		queryBuff.WriteString(`
+		WITH thid AS (
+			SELECT id FROM threads WHERE threads.slug = $1
+		) `)
 	}
 
 	thread := &models.Thread{}
 	db := database.DB.Unsafe()
-	if err := db.Get(thread, `
-			SELECT
-			th.*,
-			users.nickname as "author",
-			forums.slug as "forum"
-		FROM (
-			SELECT
-			threads.id,
+	queryBuff.WriteString(`
+		SELECT
+		threads.id,
 			threads.author_id,
 			threads.forum_id,
 			threads."message",
 			threads.created,
 			threads.title,
 			COALESCE(threads.slug, '') as "slug",
-			COALESCE(SUM(votes.voice), 0) as "votes"
-			FROM threads
-			LEFT JOIN votes
-			ON (threads.id = votes.thread_id)
-			WHERE threads.id = $1 or slug = $2
-			GROUP BY threads.id, threads."message", threads.created, threads.title, threads."slug"
-		) as th
-		JOIN users ON (th.author_id = users.id)
-		JOIN forums ON (th.forum_id = forums.id)
-		`, threadId, slugOrId);
+			users.nickname AS "author",
+			forums.slug AS "forum",
+			v.votes
+		FROM (
+			SELECT
+		COALESCE(SUM(votes.voice), 0) AS "votes"
+		FROM  votes
+	`)
+	if gotId {
+		queryBuff.WriteString(`WHERE votes.thread_id = $1::int`)
+	} else {
+		queryBuff.WriteString(`WHERE votes.thread_id = (SELECT id FROM thid)`)
+	}
+	queryBuff.WriteString(
+		` ) AS v,
+				threads
+			JOIN users ON (threads.author_id = users.id)
+			JOIN forums ON (threads.forum_id = forums.id)`)
+	queryBuff.WriteString(compareCondition)
+	if err := db.Get(thread, queryBuff.String(), slugOrId);
 		err != nil {
 		return operations.NewThreadGetOneNotFound().WithPayload(&NotFoundError)
 	}
@@ -117,48 +123,49 @@ func ThreadGetOne(params operations.ThreadGetOneParams) middleware.Responder {
 
 func ThreadUpdateOne(params operations.ThreadUpdateParams) middleware.Responder {
 	slugOrId := params.SlugOrID
-	threadId := -1
-	if id, err := strconv.Atoi(slugOrId); err == nil {
-		threadId = id
-		slugOrId = ""
+	queryBuffer := bytes.NewBufferString(`
+		WITH updated
+		AS (
+		  UPDATE threads
+		  SET ("message",title ) =
+		  (COALESCE(NULLIF($1, ''),
+					threads."message"),
+		   COALESCE(NULLIF($2, ''),
+					threads.title))`)
+
+	if _, err := strconv.Atoi(slugOrId); err == nil {
+		queryBuffer.WriteString(" WHERE threads.id = $3::int")
+	} else {
+		queryBuffer.WriteString(" WHERE threads.slug = $3")
 	}
+	queryBuffer.WriteString(" RETURNING *")
 	thread := params.Thread
 	updated := &models.Thread{}
-	db := database.DB.Unsafe()
-	err := db.Get(updated, `
-		WITH updated
-			AS (
-			UPDATE threads
-			SET ("message",title ) =
-				(COALESCE(NULLIF($1, ''),
-				threads."message"),
-				COALESCE(NULLIF($2, ''),
-				threads.title))
-			WHERE threads.id = $3 OR threads.slug = $4
-			RETURNING *
-		)
-		SELECT
-			th.*,
-			users.nickname as "author",
-			forums.slug as "forum"
+	queryBuffer.WriteString(`
+	 ) SELECT
+		  updated.id,
+		  updated.author_id,
+		  updated.forum_id,
+		  updated."message",
+		  updated.created,
+		  updated.title,
+		  v.votes,
+		  COALESCE(updated.slug, '') as "slug",
+		  users.nickname as "author",
+		  forums.slug as "forum"
 		FROM (
-			SELECT
-			updated.id,
-			updated.author_id,
-			updated.forum_id,
-			updated."message",
-			updated.created,
-			updated.title,
-			COALESCE(updated.slug, '') as "slug",
-			COALESCE(SUM(votes.voice), 0) as "votes"
-			FROM updated
-			LEFT JOIN votes
-			ON (updated.id = votes.thread_id)
-			GROUP BY updated.id, updated.author_id, updated.forum_id, updated."message", updated.created, updated.title, updated."slug"
-		) as th
-		JOIN users ON (th.author_id = users.id)
-		JOIN forums ON (th.forum_id = forums.id)  `,
-		thread.Message, thread.Title, threadId, slugOrId)
+			   SELECT
+				 COALESCE(SUM(votes.voice), 0) as "votes"
+			   FROM votes WHERE votes.thread_id = (SELECT id from updated)
+			 ) as v,
+		  updated
+		  JOIN users ON (updated.author_id = users.id)
+		  JOIN forums ON (updated.forum_id = forums.id)
+	`)
+	db := database.DB.Unsafe()
+
+	err := db.Get(updated, queryBuffer.String(),
+		thread.Message, thread.Title, slugOrId)
 	if err != nil {
 		return operations.NewThreadUpdateNotFound().WithPayload(&NotFoundError)
 	}
@@ -170,65 +177,76 @@ func ThreadVote(params operations.ThreadVoteParams) middleware.Responder {
 		ID:   -1,
 		Slug: params.SlugOrID,
 	}
+	gotId := false
 	if id, err := strconv.Atoi(thread.Slug); err == nil {
 		thread.ID = int32(id)
 		thread.Slug = ""
+		gotId = true
 	}
+
 	vote := params.Vote
-	db := database.DB.Unsafe()
 
-	if thread.ID == -1 {
-		err := db.Get(&thread.ID, `SELECT id FROM threads WHERE slug = $1`, thread.Slug)
-		if err != nil {
-			return operations.NewThreadVoteNotFound().WithPayload(&NotFoundError)
-		}
-	}
-	userId := -1
-	if err := db.Get(&userId, `SELECT id FROM users WHERE nickname = $1`, vote.Nickname);
-		err != nil {
-		return operations.NewThreadVoteNotFound().WithPayload(&NotFoundError)
-	}
+	queryBuff := bytes.NewBufferString(`
+	INSERT INTO votes
+	  (user_id, thread_id, voice)
+		`)
 
-	_, err := db.Exec(`
-		INSERT INTO votes
-		(user_id, thread_id, voice)
-		VALUES ($1, $2, $3)
-		ON CONFLICT ON CONSTRAINT one_voice_per_user DO UPDATE SET voice = EXCLUDED.voice
+	tx := database.DB.MustBegin().Unsafe()
+	err := error(nil)
+	if gotId {
+		queryBuff.WriteString(`
+		SELECT u.id, $1, $3
+		FROM
+		(SELECT id from users WHERE nickname = $2) as u
+		ON CONFLICT ON CONSTRAINT votes_pkey DO UPDATE SET voice = EXCLUDED.voice
 		RETURNING thread_id
-	`, userId, thread.ID, vote.Voice)
+	 	`)
+		err = tx.Get(&thread.ID, queryBuff.String(), thread.ID, vote.Nickname, vote.Voice)
+	} else {
+		queryBuff.WriteString(`
+		SELECT u.id, t.id, $3
+		FROM
+		(SELECT id from users WHERE nickname = $1) as u,
+		(SELECT id from threads WHERE slug = $2) as t
+		ON CONFLICT ON CONSTRAINT votes_pkey DO UPDATE SET voice = EXCLUDED.voice
+		RETURNING thread_id
+	 	`)
+		err = tx.Get(&thread.ID, queryBuff.String(), vote.Nickname, thread.Slug, vote.Voice)
+	}
 
 	if err != nil {
+		tx.Rollback()
 		return operations.NewThreadVoteNotFound().WithPayload(&NotFoundError)
 	}
 
-	err = db.Get(thread,
+	err = tx.Get(thread,
 		`
 		SELECT
-				th.*,
-				users.nickname AS "author",
-				forums.slug AS "forum"
-			FROM (
-				SELECT
-				threads.id,
-				threads.author_id,
-				threads.forum_id,
-				threads."message",
-				threads.created,
-				threads.title,
-				COALESCE(threads.slug, '') AS "slug",
+		  threads.author_id,
+		  threads.forum_id,
+		  threads."message",
+		  threads.created,
+		  threads.title,
+		  COALESCE(threads.slug, '') as "slug",
+		  users.nickname AS "author",
+		  forums.slug AS "forum",
+		  v.votes
+		FROM (
+			   SELECT
 				COALESCE(SUM(votes.voice), 0) AS "votes"
-				FROM threads
-				LEFT JOIN votes
-					ON (threads.id = votes.thread_id)
-				WHERE threads.id = $1
-				GROUP BY threads.id, threads.author_id, threads.forum_id, threads."message", threads.created, threads.title, threads."slug"
-			) AS th
-			JOIN users ON (th.author_id = users.id)
-			JOIN forums ON (th.forum_id = forums.id)
+			   FROM  votes
+			   WHERE votes.thread_id = $1
+			 ) AS v,
+		  threads
+		  JOIN users ON (threads.author_id = users.id)
+		  JOIN forums ON (threads.forum_id = forums.id)
+		WHERE threads.id = $1
 		`, thread.ID)
 
 	if err != nil {
+		tx.Rollback()
 		return operations.NewThreadVoteNotFound().WithPayload(&NotFoundError)
 	}
+	tx.Commit()
 	return operations.NewThreadVoteOK().WithPayload(thread)
 }

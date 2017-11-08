@@ -9,7 +9,6 @@ import (
 	"github.com/Dnnd/tech_db/database/errors"
 	"bytes"
 	"github.com/Dnnd/tech_db/utils"
-	"log"
 )
 
 func CreateForum(params operations.ForumCreateParams) middleware.Responder {
@@ -17,7 +16,7 @@ func CreateForum(params operations.ForumCreateParams) middleware.Responder {
 	forumFromBase := models.Forum{}
 	db := database.DB
 
-	err := db.Unsafe().Get(&forumFromBase, `
+	db.Unsafe().Get(&forumFromBase, `
 		SELECT
                   COALESCE(forums_full.slug, '')  AS "slug",
                   COALESCE(forums_full.title, '') AS "title",
@@ -30,13 +29,12 @@ func CreateForum(params operations.ForumCreateParams) middleware.Responder {
                                 forums.user_id as "user_id",
                                 forums.slug as "slug",
                                 forums.title as "title",
-                                count(posts.*)   AS "posts",
+                                forums.posts_count as "posts",
                                 count(threads.*) AS "threads"
                               FROM forums
                                 LEFT JOIN threads ON (forums.id = threads.forum_id)
-                                LEFT JOIN posts ON (forums.id = posts.forum_id)
                               WHERE forums.slug = $1
-                              GROUP BY forums.user_id, forums.slug, forums.title
+                              GROUP BY forums.user_id, forums.slug, forums.title, forums.posts_count
                             ) AS forums_full
                     ON (users.id = forums_full.user_id)
                 WHERE users.nickname = $2`,
@@ -52,13 +50,13 @@ func CreateForum(params operations.ForumCreateParams) middleware.Responder {
 
 	forum.User = forumFromBase.User
 	result := db.Unsafe().QueryRowx(`
-						  INSERT INTO forums (slug,title, user_id)
-						  VALUES($1, $2, user_nickname_to_id($3))
-						  RETURNING *`,
+						  INSERT INTO forums (slug,title, user_id, posts_count)
+						  VALUES($1, $2, user_nickname_to_id($3), 0)
+						  RETURNING slug,title, user_id, posts_count as "posts"`,
 		forum.Slug, forum.Title, forum.User)
 
 	//TODO: something to deal with concurrent INSERT
-	err = result.StructScan(forum)
+	err := result.StructScan(forum)
 	if errors.CheckForeginKeyViolation(err) {
 		return operations.NewForumCreateNotFound().WithPayload(&NotFoundError)
 	}
@@ -73,25 +71,21 @@ func GetForumDetails(params operations.ForumGetOneParams) middleware.Responder {
 	forum := models.Forum{}
 	db := database.DB.Unsafe()
 	err := db.Get(&forum, `
+	WITH fid AS (
+  		SELECT id FROM forums WHERE forums.slug =  $1
+	)
 		SELECT
-		  fp.posts,
-		  ft.*,
-		  users.nickname as "user"
+		 forums.slug,
+		forums.title,
+		forums.posts_count as "posts",
+		  u.nickname as "user",
+		  tc.c as "threads"
 		FROM
-		  (SELECT count(*) AS "posts"
-		   FROM forums
-			 JOIN posts ON (forums.id = posts.forum_id AND forums.slug = $1)) AS fp,
-		  (SELECT
-			 forums.id,
-			 forums.title,
-			 forums.slug,
-			 forums.user_id,
-			 count(CASE WHEN threads.id IS NOT NULL THEN 1 END ) AS "threads"
-		   FROM forums
-			 LEFT JOIN threads ON (forums.id = threads.forum_id)
-			WHERE forums.slug = $1
-		   GROUP BY forums.id, forums.slug, forums.user_id) AS ft
-		  JOIN users ON (ft.user_id = users.id)
+		  forums
+		  JOIN users u ON forums.user_id = u.id,
+		 (SELECT count(*) as c FROM  threads t WHERE t.forum_id = (SELECT id from fid)) as tc
+
+		WHERE forums.id = (SELECT id FROM fid)
 	`, slug)
 	if err == sql.ErrNoRows {
 		return operations.NewForumGetOneNotFound().WithPayload(&NotFoundError)
@@ -101,51 +95,64 @@ func GetForumDetails(params operations.ForumGetOneParams) middleware.Responder {
 
 func GetThreadsByForum(params operations.ForumGetThreadsParams) middleware.Responder {
 	slug := params.Slug
-	since := params.Since
-	limit := params.Limit
 	sortOrder := "ASC"
-	compareWay := 0
+	isDesc := false
 	if params.Desc != nil && *params.Desc == true {
 		sortOrder = "DESC"
-		compareWay = 1
+		isDesc = true
 	}
-
-	db := database.DB.Unsafe()
 	threads := models.Threads{}
-	query, _ := db.Preparex(`
+	queryBuff := bytes.NewBufferString(`
+			WITH fid AS (SELECT
+               id,
+               slug
+             FROM forums
+             WHERE forums.slug = $1 )
 			SELECT
-			users.nickname as "author",
-			th.*
-			FROM (
-			SELECT
-			threads.id,
-			threads.author_id,
-			threads."message",
-			threads.created,
-			threads.title,
-			forums.slug as "forum",
-			COALESCE(threads.slug, '') as "slug",
-			COALESCE(SUM(votes.voice), 0) as "votes"
+			  threads.id,
+			  threads.author_id,
+			  threads."message",
+			  threads.created,
+			  u.nickname                 AS "author",
+			  (SELECT slug
+			   FROM fid)                 AS "forum",
+			  threads.title,
+			  COALESCE(threads.slug, '') AS "slug",
+			  t.votes
 			FROM threads
-			JOIN forums
-				ON (threads.forum_id = forums.id AND forums.slug = $1 )
-			LEFT JOIN votes
-				ON (threads.id = votes.thread_id)
-			WHERE dynamic_less_equal($4, threads.created, $3)
-			GROUP BY threads.id,threads.author_id, threads."message", threads.created, threads.title, threads.slug, forums.slug
-			) as th
-			JOIN users ON (th.author_id = users.id)
-			ORDER BY th.created ` + sortOrder + ` LIMIT $2`)
-	defer query.Close()
-	query.Select(&threads, slug, limit, since, compareWay)
+			  JOIN (SELECT
+					  threads.id,
+					  COALESCE(SUM(v.voice), 0) AS "votes"
+					FROM threads
+					  LEFT JOIN votes v ON threads.id = v.thread_id
+					WHERE threads.forum_id = (SELECT id
+											  FROM fid)
+					GROUP BY threads.id
+				   ) AS t
+				ON threads.id = t.id
+			  JOIN users u ON threads.author_id = u.id`)
+	if params.Since != nil {
+		utils.GenCompareConfition(queryBuff, " WHERE", isDesc, `threads.created`, `$3`)
+	}
+	queryBuff.WriteString(` ORDER BY threads.created `)
+	queryBuff.WriteString(sortOrder)
+	queryBuff.WriteString(` LIMIT $2`)
 
+	tx := database.DB.MustBegin().Unsafe()
+	if params.Since != nil {
+		tx.Select(&threads, queryBuff.String(), slug, params.Limit, params.Since)
+	} else {
+		tx.Select(&threads, queryBuff.String(), slug, params.Limit)
+	}
 	if len(threads) == 0 {
 		forumID := -1
-		db.Get(&forumID, "SELECT id FROM forums WHERE forums.slug = $1", slug)
+		tx.Get(&forumID, "SELECT id FROM forums WHERE forums.slug = $1", slug)
 		if forumID == -1 {
+			tx.Rollback()
 			return operations.NewForumGetThreadsNotFound().WithPayload(&NotFoundError)
 		}
 	}
+	tx.Commit()
 	return operations.NewForumGetThreadsOK().WithPayload(threads)
 }
 
@@ -178,7 +185,7 @@ func ForumGetUsers(params operations.ForumGetUsersParams) middleware.Responder {
 	`)
 
 	if params.Since != nil {
-		utils.GenCompareCondition(queryBuff, " AND ", isDesc, "nickname ", " $3 ")
+		utils.GenStrictCompareCondition(queryBuff, " AND ", isDesc, "nickname ", " $3 ")
 	}
 	queryBuff.WriteString("ORDER BY nickname ")
 	queryBuff.WriteString(sortOrder)
@@ -190,7 +197,6 @@ func ForumGetUsers(params operations.ForumGetUsersParams) middleware.Responder {
 		err = db.Select(&users, queryBuff.String(), forumId, params.Limit)
 	}
 	if err != nil {
-		log.Println(err)
 		return operations.NewForumGetUsersNotFound().WithPayload(&NotFoundError)
 	}
 	return operations.NewForumGetUsersOK().WithPayload(users)
