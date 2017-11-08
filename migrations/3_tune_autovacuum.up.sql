@@ -1,41 +1,17 @@
--- ALTER TABLE users
---   SET ( AUTOVACUUM_ANALYZE_SCALE_FACTOR = 0.0);
--- ALTER TABLE users
---   SET ( AUTOVACUUM_ANALYZE_THRESHOLD = 1000);
---
--- ALTER TABLE threads
---   SET ( AUTOVACUUM_ANALYZE_SCALE_FACTOR = 0.0);
--- ALTER TABLE threads
---   SET ( AUTOVACUUM_ANALYZE_THRESHOLD = 1000);
---
-
---
--- ALTER TABLE users
---   SET ( AUTOVACUUM_VACUUM_SCALE_FACTOR = 0.0);
--- ALTER TABLE users
---   SET ( AUTOVACUUM_VACUUM_THRESHOLD = 1000);
---
--- ALTER TABLE threads
---   SET ( AUTOVACUUM_VACUUM_SCALE_FACTOR = 0.0);
--- ALTER TABLE threads
---   SET ( AUTOVACUUM_VACUUM_THRESHOLD = 1000);
--- --
--- ALTER TABLE votes
---   SET ( AUTOVACUUM_VACUUM_SCALE_FACTOR = 0.0);
--- ALTER TABLE votes
---   SET ( AUTOVACUUM_VACUUM_THRESHOLD = 150000);
---
--- ALTER TABLE posts
---   SET ( AUTOVACUUM_VACUUM_SCALE_FACTOR = 0.0);
--- ALTER TABLE posts
---   SET ( AUTOVACUUM_VACUUM_THRESHOLD = 50000);
---
--- ALTER TABLE votes
---   SET ( AUTOVACUUM_ANALYZE_SCALE_FACTOR = 0.0);
--- ALTER TABLE votes
---   SET ( AUTOVACUUM_ANALYZE_THRESHOLD = 150000);
---
--- ALTER TABLE posts
---   SET ( AUTOVACUUM_ANALYZE_SCALE_FACTOR = 0.0);
--- ALTER TABLE posts
---   SET ( AUTOVACUUM_ANALYZE_THRESHOLD = 50000);
+SELECT
+  p.id,
+  p.message,
+  p.thread_id              AS thread,
+  p.forum_slug :: TEXT     AS forum,
+  p.owner_nickname :: TEXT AS author,
+  p.created,
+  p.isedited,
+  p.parent
+FROM post p
+WHERE p.thread_id = '5001' :: INT AND CASE WHEN '749508' :: INT > -1
+  THEN CASE WHEN 'DESC' = 'DESC'
+    THEN p.id < $2 :: INT
+       ELSE p.id > $2 :: INT END
+                                      ELSE TRUE END
+ORDER BY p.id DESC, p.thread_id
+LIMIT 15;

@@ -8,10 +8,10 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS forums (
-  id        SERIAL PRIMARY KEY,
-  slug      CITEXT UNIQUE NOT NULL,
-  user_id   INTEGER REFERENCES users (id),
-  title     VARCHAR(255)  NOT NULL,
+  id          SERIAL PRIMARY KEY,
+  slug        CITEXT UNIQUE NOT NULL,
+  user_id     INTEGER REFERENCES users (id),
+  title       VARCHAR(255)  NOT NULL,
   posts_count INT           NOT NULL DEFAULT 0
 );
 
@@ -109,11 +109,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION get_root(
-  IN  path      INT [],
+  IN  path    INT [],
   OUT root_id INT)  IMMUTABLE
 AS $$
 BEGIN
-  root_id = path[1];
+  root_id = path [1];
 END;
 $$ LANGUAGE plpgsql;
 

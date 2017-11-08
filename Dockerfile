@@ -12,7 +12,9 @@ RUN    /etc/init.d/postgresql start &&\
     psql --command " CREATE USER docker WITH SUPERUSER PASSWORD 'docker';" &&\
     createdb -O docker docker &&\
     /etc/init.d/postgresql stop
-RUN echo "local all  all  md5" >> /etc/postgresql/10/main/pg_hba.conf
+RUN echo "local all  all  md5" >> /etc/postgresql/10/main/pg_hba.conf.new
+RUN cat /etc/postgresql/10/main/pg_hba.conf >> /etc/postgresql/10/main/pg_hba.conf.new
+RUN mv /etc/postgresql/10/main/pg_hba.conf.new /etc/postgresql/10/main/pg_hba.conf
 RUN echo "unix_socket_directories='/tmp,/var/run/postgresql_sock'" >> /etc/postgresql/10/main/postgresql.conf
 
 USER root
