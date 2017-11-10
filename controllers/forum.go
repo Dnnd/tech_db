@@ -50,12 +50,12 @@ func CreateForum(params operations.ForumCreateParams) middleware.Responder {
 
 	forum.User = forumFromBase.User
 	result := db.Unsafe().QueryRowx(`
+						WITH uid AS (SELECT id from users where nickname = $3)
 						  INSERT INTO forums (slug,title, user_id, posts_count)
-						  VALUES($1, $2, user_nickname_to_id($3), 0)
+						  VALUES($1, $2, (SELECT id from uid), 0)
 						  RETURNING slug,title, user_id, posts_count as "posts"`,
 		forum.Slug, forum.Title, forum.User)
 
-	//TODO: something to deal with concurrent INSERT
 	err := result.StructScan(forum)
 	if errors.CheckForeginKeyViolation(err) {
 		return operations.NewForumCreateNotFound().WithPayload(&NotFoundError)

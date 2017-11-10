@@ -46,7 +46,7 @@ func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 
 	api.PostUpdateHandler = operations.PostUpdateHandlerFunc(controllers.PostUpdate)
 
-	api.PostsCreateHandler = operations.PostsCreateHandlerFunc(controllers.PostCreateMany)
+	api.PostsCreateHandler = operations.PostsCreateHandlerFunc(controllers.PostCreateCopy)
 	api.StatusHandler = operations.StatusHandlerFunc(controllers.ServiceStatus)
 	api.ThreadCreateHandler = operations.ThreadCreateHandlerFunc(controllers.ThreadCreate)
 
@@ -76,7 +76,7 @@ func configureTLS(tlsConfig *tls.Config) {
 // If you need to modify a config, store server instance to stop it individually later, this is the place.
 // This function can be called multiple times, depending on the number of serving schemes.
 // scheme value will be set accordingly: "http", "https" or "unix"
-func configureServer(s *graceful.Server, scheme, addr string){
+func configureServer(s *graceful.Server, scheme, addr string) {
 
 }
 

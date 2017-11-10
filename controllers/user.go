@@ -48,6 +48,7 @@ func UpdateUser(params operations.UserUpdateParams) middleware.Responder {
 		updateFields.Fullname,
 		updateFields.Email,
 		nickname)
+
 	err := result.StructScan(&user)
 	if err == sql.ErrNoRows {
 		return operations.NewUserUpdateNotFound().WithPayload(&NotFoundError)

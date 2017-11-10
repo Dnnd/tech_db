@@ -17,7 +17,120 @@ import (
 	"sort"
 	"github.com/jmoiron/sqlx"
 	"strings"
+	"log"
 )
+
+func PostCreateCopy(params operations.PostsCreateParams) middleware.Responder {
+	thread := &models.Thread{
+		ID:   -1,
+		Slug: params.SlugOrID,
+	}
+	if id, err := strconv.Atoi(thread.Slug); err == nil {
+		thread.ID = int32(id)
+		thread.Slug = ""
+	}
+	tx := database.DB.MustBegin().Unsafe()
+	result := tx.QueryRowx(`
+		SELECT th.id, COALESCE(th.slug, ''), forums.slug, forums.id, now() as created
+		FROM threads as th
+		JOIN forums ON (th.forum_id = forums.id)
+		WHERE th.id = $1 or th.slug = $2
+	`, thread.ID, thread.Slug)
+
+	forumId := 0
+	dbtime := strfmt.NewDateTime()
+	if err := result.Scan(&thread.ID, &thread.Slug, &thread.Forum, &forumId, &dbtime);
+		err != nil {
+		tx.Rollback()
+		return operations.NewPostsCreateNotFound().WithPayload(&NotFoundError)
+	}
+	if len(params.Posts) == 0 {
+		tx.Commit()
+		return operations.NewPostsCreateCreated().WithPayload(models.Posts{})
+	}
+	posts := params.Posts
+	usersData := make([]struct {
+		Id       int
+		Nickname string
+	}, 0, len(posts))
+
+	postData := make([]struct {
+		ParentId int64
+		Path     pq.Int64Array
+	}, 0, len(posts))
+
+	idSource, _ := tx.Queryx(`SELECT nextval('posts_id_seq'::REGCLASS) AS id
+	FROM generate_series(1, $1)`, len(posts))
+	defer idSource.Close()
+	for _, post := range posts {
+		idSource.Next()
+		idSource.Scan(&post.ID)
+	}
+	idSource.Close()
+
+	parents := make([]int64, 0, len(posts))
+
+	for _, post := range posts {
+		parents = append(parents, post.Parent)
+	}
+
+	tx.Select(&usersData, `SELECT id, nickname FROM users ORDER by nickname`)
+	query, args, _ := sqlx.In(`
+	SELECT  path, posts.id as parentid
+	FROM posts
+	WHERE posts.thread_id = ? AND posts.id IN (?)
+	ORDER by posts.id;`, thread.ID, parents)
+	query = tx.Rebind(query)
+	tx.Select(&postData, query, args...)
+
+	batch, err := tx.Prepare(pq.CopyIn("posts", "id", "forum_id", "thread_id", "author_id", "message", "path", "created", "parent"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, post := range posts {
+		path := pq.Int64Array{post.ID}
+
+		if post.Parent != 0 {
+			postIdx := sort.Search(len(postData), func(i int) bool { return postData[i].ParentId >= post.Parent })
+			if postIdx >= len(postData) || postData[postIdx].ParentId != post.Parent {
+				tx.Rollback()
+				return operations.NewPostsCreateConflict().WithPayload(&models.Error{"Conflict"})
+			}
+			path = append(postData[postIdx].Path, post.ID)
+		}
+
+		authorIdx := sort.Search(len(usersData), func(i int) bool { return strings.ToLower(usersData[i].Nickname) >= strings.ToLower(post.Author) })
+		if authorIdx >= len(usersData) || strings.ToLower(usersData[authorIdx].Nickname) != strings.ToLower(post.Author) {
+			tx.Rollback()
+			return operations.NewPostsCreateNotFound().WithPayload(&NotFoundError)
+		}
+
+		post.Author = usersData[authorIdx].Nickname
+		post.Forum = thread.Forum
+		post.Thread = thread.ID
+		if post.Created == nil {
+			post.Created = &dbtime
+		}
+		batch.Exec(post.ID,
+			forumId,
+			post.Thread,
+			usersData[authorIdx].Id,
+			post.Message,
+			path,
+			post.Created,
+			post.Parent)
+
+	}
+
+	if _, err := batch.Exec(); err != nil {
+		tx.Rollback()
+		return operations.NewPostsCreateNotFound().WithPayload(&NotFoundError)
+	}
+	batch.Close()
+	tx.MustExec(`UPDATE forums SET posts_count = posts_count + $1 WHERE id = $2`, len(posts), forumId)
+	tx.Commit()
+	return operations.NewPostsCreateCreated().WithPayload(posts)
+}
 
 func PostCreateMany(params operations.PostsCreateParams) middleware.Responder {
 	thread := &models.Thread{
@@ -387,8 +500,8 @@ func ThreadsGetPosts(params operations.ThreadGetPostsParams) middleware.Responde
 		queryBuff.WriteString(sortOrder)
 		db.Select(&posts, queryBuff.String(),
 			params.Since, params.SlugOrID, params.Limit)
-
 	}
+
 	if len(posts) == 0 {
 		thid := -1
 		if gotId {

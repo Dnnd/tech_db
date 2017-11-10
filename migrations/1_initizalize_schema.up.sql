@@ -1,4 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS CITEXT;
+
 CREATE TABLE IF NOT EXISTS users (
   id       SERIAL PRIMARY KEY,
   about    TEXT,
@@ -51,18 +52,6 @@ CREATE TABLE IF NOT EXISTS status (
   "user" INTEGER NOT NULL,
   post   INTEGER NOT NULL
 );
-
-CREATE OR REPLACE FUNCTION forum_slug_to_id(slug CITEXT)
-  RETURNS INTEGER AS $$
-DECLARE fid INTEGER;
-BEGIN
-  SELECT id
-  INTO STRICT fid
-  FROM forums
-  WHERE forums.slug = forum_slug_to_id.slug;
-  RETURN fid;
-END;
-$$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION build_path(
   IN  parent_id      INTEGER,
@@ -117,24 +106,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION user_nickname_to_id(user_nickname CITEXT)
-  RETURNS INTEGER AS $$
-DECLARE uid INTEGER;
-BEGIN
-  BEGIN
-    SELECT id
-    INTO STRICT uid
-    FROM users
-    WHERE user_nickname = nickname;
-    EXCEPTION
-    WHEN no_data_found
-      THEN RETURN -1;
-  END;
-  RETURN uid;
-END;
-$$ LANGUAGE plpgsql;
-
-
 CREATE OR REPLACE FUNCTION count_inserted_rows()
   RETURNS TRIGGER
 AS $$
@@ -143,10 +114,6 @@ BEGIN
   THEN
     UPDATE status
     SET forum = forum + 1;
-  ELSIF (TG_TABLE_NAME = 'posts')
-    THEN
-      UPDATE status
-      SET post = post + 1;
   ELSIF (TG_TABLE_NAME = 'threads')
     THEN
       UPDATE status
@@ -159,77 +126,6 @@ BEGIN
   RETURN NULL;
 END
 $$ LANGUAGE plpgsql;
-
-
-CREATE OR REPLACE FUNCTION dynamic_less_equal(cond INTEGER,
-                                              lhs  TIMESTAMP WITH TIME ZONE,
-                                              rhs  TIMESTAMP WITH TIME ZONE)
-  RETURNS BOOLEAN AS $$
-
-BEGIN
-  CASE
-
-    WHEN num_nulls(cond, lhs, rhs) != 0
-    THEN RETURN TRUE;
-    WHEN cond = 1
-    THEN RETURN lhs <= rhs;
-    WHEN cond = 0
-    THEN RETURN lhs >= rhs;
-  ELSE RETURN TRUE;
-  END CASE;
-END;
-$$ LANGUAGE plpgsql CALLED ON NULL INPUT;
-
-CREATE OR REPLACE FUNCTION dynamic_less(cond BOOLEAN,
-                                        lhs  CITEXT,
-                                        rhs  CITEXT)
-  RETURNS BOOLEAN AS $$
-BEGIN
-  CASE
-    WHEN num_nulls(cond, lhs, rhs) != 0
-    THEN RETURN TRUE;
-    WHEN cond = TRUE
-    THEN RETURN lhs < rhs;
-    WHEN cond = FALSE
-    THEN RETURN lhs > rhs;
-  ELSE RETURN TRUE;
-  END CASE;
-END;
-$$ LANGUAGE plpgsql CALLED ON NULL INPUT;
-
-CREATE OR REPLACE FUNCTION dynamic_less(cond BOOLEAN,
-                                        lhs  INTEGER,
-                                        rhs  INTEGER)
-  RETURNS BOOLEAN AS $$
-BEGIN
-  CASE
-    WHEN num_nulls(cond, lhs, rhs) != 0
-    THEN RETURN TRUE;
-    WHEN cond = TRUE
-    THEN RETURN lhs < rhs;
-    WHEN cond = FALSE
-    THEN RETURN lhs > rhs;
-  ELSE RETURN TRUE;
-  END CASE;
-END;
-$$ LANGUAGE plpgsql CALLED ON NULL INPUT;
-
-CREATE OR REPLACE FUNCTION dynamic_less(cond BOOLEAN,
-                                        lhs  INTEGER [],
-                                        rhs  INTEGER [])
-  RETURNS BOOLEAN AS $$
-BEGIN
-  CASE
-    WHEN num_nulls(cond, lhs, rhs) != 0
-    THEN RETURN TRUE;
-    WHEN cond = TRUE
-    THEN RETURN lhs < rhs;
-    WHEN cond = FALSE
-    THEN RETURN lhs > rhs;
-  ELSE RETURN TRUE;
-  END CASE;
-END;
-$$ LANGUAGE plpgsql CALLED ON NULL INPUT;
 
 CREATE TRIGGER forums_rows_number
   AFTER INSERT
@@ -246,5 +142,5 @@ EXECUTE PROCEDURE count_inserted_rows();
 CREATE TRIGGER threads_rows_number
   AFTER INSERT
   ON threads
-  FOR EACH ROW
+  FOR EACH STATEMENT
 EXECUTE PROCEDURE count_inserted_rows();

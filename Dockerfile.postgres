@@ -15,14 +15,18 @@ RUN echo "host all  all    0.0.0.0/0  md5" >> /etc/postgresql/10/main/pg_hba.con
 RUN echo "listen_addresses='*'" >> /etc/postgresql/10/main/postgresql.conf
 EXPOSE 5432
 
-RUN echo "log_duration = on" >> /etc/postgresql/10/main/postgresql.conf;
-RUN echo "log_lock_waits = on" >>/etc/postgresql/10/main/postgresql.conf;
-RUN echo "log_min_duration_statement = 50" >>/etc/postgresql/10/main/postgresql.conf;
-RUN echo  "log_filename = 'postgresql-%Y-%m-%d_%H%M%S'" >>/etc/postgresql/10/main/postgresql.conf;
-RUN echo "log_directory = '/var/log/postgresql'" >>/etc/postgresql/10/main/postgresql.conf;
-RUN echo "log_destination = 'csvlog'" >>/etc/postgresql/10/main/postgresql.conf;
-RUN echo  "logging_collector = on" >>/etc/postgresql/10/main/postgresql.conf;
-
+RUN echo "log_duration = on" >> /etc/postgresql/10/main/postgresql.conf
+RUN echo "log_lock_waits = on" >>/etc/postgresql/10/main/postgresql.conf
+RUN echo "log_min_duration_statement = 50" >>/etc/postgresql/10/main/postgresql.conf
+RUN echo  "log_filename = 'postgresql-%Y-%m-%d_%H%M%S'" >>/etc/postgresql/10/main/postgresql.conf
+RUN echo "log_directory = '/var/log/postgresql'" >>/etc/postgresql/10/main/postgresql.conf
+RUN echo "log_destination = 'csvlog'" >>/etc/postgresql/10/main/postgresql.conf
+RUN echo  "logging_collector = on" >>/etc/postgresql/10/main/postgresql.conf
+RUN echo "synchronous_commit = off" >>  /etc/postgresql/10/main/postgresql.conf
+RUN echo "fsync = off" >>  /etc/postgresql/10/main/postgresql.conf
+RUN echo "full_page_writes = off" >>  /etc/postgresql/10/main/postgresql.conf
+RUN echo "autovacuum_naptime = 60" >>  /etc/postgresql/10/main/postgresql.conf
+RUN echo "autovacuum_freeze_table_age  = 0" >>  /etc/postgresql/10/main/postgresql.conf
 CMD ["/usr/lib/postgresql/10/bin/postgres", "-D", "/var/lib/postgresql/10/main", "-c", "config_file=/etc/postgresql/10/main/postgresql.conf"]
 
 
