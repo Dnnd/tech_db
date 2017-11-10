@@ -10,6 +10,8 @@ import (
 	"github.com/tylerb/graceful"
 	"github.com/Dnnd/tech_db/restapi/operations"
 	"github.com/Dnnd/tech_db/controllers"
+	"time"
+	"github.com/Dnnd/tech_db/database"
 )
 
 // This file is safe to edit. Once it exists it will not be overwritten
@@ -22,6 +24,18 @@ func configureFlags(api *operations.TechDbForumAPI) {
 
 func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 	// configure the api here
+	ticker := time.NewTicker(time.Second * 5)
+	go func() {
+		count := 0
+		for _ = range ticker.C {
+			database.DB.Exec("VACUUM")
+			if count == 2 {
+				ticker.Stop()
+			}
+			count++
+		}
+	}()
+
 	api.ServeError = errors.ServeError
 
 	// Set your custom logger if needed. Default one is log.Printf
