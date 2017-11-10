@@ -24,7 +24,7 @@ func configureFlags(api *operations.TechDbForumAPI) {
 
 func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 	// configure the api here
-	ticker := time.NewTicker(time.Second * 5)
+	ticker := time.NewTicker(time.Minute * 5)
 	go func() {
 		count := 0
 		for _ = range ticker.C {
