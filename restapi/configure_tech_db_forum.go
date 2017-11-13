@@ -24,16 +24,10 @@ func configureFlags(api *operations.TechDbForumAPI) {
 
 func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 	// configure the api here
-	ticker := time.NewTicker(time.Minute * 5)
+	timer := time.NewTimer(time.Minute * 6)
 	go func() {
-		count := 0
-		for _ = range ticker.C {
-			database.DB.Exec("VACUUM")
-			if count == 2 {
-				ticker.Stop()
-			}
-			count++
-		}
+		<-timer.C
+		database.DB.Exec("VACUUM")
 	}()
 
 	api.ServeError = errors.ServeError
