@@ -7,6 +7,9 @@ CREATE INDEX IF NOT EXISTS thread_forumid_fkey_idx
 CREATE INDEX IF NOT EXISTS thread_forumid_aid_fkey_idx
   ON threads (forum_id, author_id);
 
+CREATE INDEX IF NOT EXISTS thread_fid_created
+  ON threads (forum_id, created, id);
+
 CREATE INDEX IF NOT EXISTS thread_authorid_fkey_idx
   ON threads (author_id);
 

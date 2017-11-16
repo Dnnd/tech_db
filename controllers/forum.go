@@ -126,14 +126,18 @@ func GetThreadsByForum(params operations.ForumGetThreadsParams) middleware.Respo
 					FROM threads
 					  LEFT JOIN votes v ON threads.id = v.thread_id
 					WHERE threads.forum_id = (SELECT id
-											  FROM fid)
-					GROUP BY threads.id
+											  FROM fid)`)
+	if params.Since != nil {
+		utils.GenCompareConfition(queryBuff, " AND", isDesc, `threads.created`, `$3`)
+	}
+	queryBuff.WriteString(` GROUP BY threads.id
+								ORDER BY threads.created `)
+	queryBuff.WriteString(sortOrder)
+	queryBuff.WriteString(` LIMIT $2`)
+	queryBuff.WriteString(`
 				   ) AS t
 				ON threads.id = t.id
 			  JOIN users u ON threads.author_id = u.id`)
-	if params.Since != nil {
-		utils.GenCompareConfition(queryBuff, " WHERE", isDesc, `threads.created`, `$3`)
-	}
 	queryBuff.WriteString(` ORDER BY threads.created `)
 	queryBuff.WriteString(sortOrder)
 	queryBuff.WriteString(` LIMIT $2`)

@@ -83,7 +83,7 @@ func PostCreateCopy(params operations.PostsCreateParams) middleware.Responder {
 	query = tx.Rebind(query)
 	tx.Select(&postData, query, args...)
 
-	batch, err := tx.Prepare(pq.CopyIn("posts", "id", "forum_id", "thread_id", "author_id", "message", "path", "created", "parent"))
+	batch, err := tx.Prepare(pq.CopyIn("posts", "id", "forum_id", "thread_id", "author_id", "message", "path", "created", "parent", "root", "author_nickname", "forum_slug"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -118,8 +118,10 @@ func PostCreateCopy(params operations.PostsCreateParams) middleware.Responder {
 			post.Message,
 			path,
 			post.Created,
-			post.Parent)
-
+			post.Parent,
+			path[0],
+			post.Author,
+			post.Forum)
 	}
 
 	if _, err := batch.Exec(); err != nil {
@@ -259,13 +261,9 @@ func PostGetOne(params operations.PostGetOneParams) middleware.Responder {
 			posts.is_edited as "isEdited",
 			posts.id,
 			posts.parent,
-			forums.slug as forum,
-			users.nickname as author
-			FROM
-			posts
-			JOIN users ON (posts.author_id = users.id)
-			JOIN forums ON (posts.forum_id = forums.id)
-			JOIN threads on (posts.thread_id = threads.id)
+			posts.forum_slug as forum,
+			posts.author_nickname as author
+			FROM posts
 			WHERE posts.id = $1
 	`, params.ID)
 
@@ -408,18 +406,17 @@ func ThreadsGetPosts(params operations.ThreadGetPostsParams) middleware.Responde
 				  posts.is_edited        AS "isEdited",
 				  posts.id,
 				  posts.parent,
-				  f.slug                 AS forum,
-				  users.nickname         AS author
-				FROM
-				  posts
-				  JOIN forums f ON (posts.forum_id = f.id)
-				  JOIN users ON (posts.author_id = users.id)
+				  posts.forum_slug            AS forum,
+				  posts.author_nickname         AS author
+				FROM  posts
 		 		WHERE posts.thread_id = (SELECT id from in_thread_id) `)
 
 		if params.Since != nil {
-			utils.GenStrictCompareCondition(queryBuff, "AND", isDesc, "posts.id", "$3")
+			utils.GenStrictCompareCondition(queryBuff, " AND", isDesc, "posts.id", "$3")
 		}
-		queryBuff.WriteString("ORDER BY (posts.created , posts.id) ")
+		queryBuff.WriteString("ORDER BY posts.created ")
+		queryBuff.WriteString(sortOrder)
+		queryBuff.WriteString(" ,posts.id ")
 		queryBuff.WriteString(sortOrder)
 		queryBuff.WriteString(" LIMIT $1")
 		if params.Since != nil {
@@ -443,18 +440,16 @@ func ThreadsGetPosts(params operations.ThreadGetPostsParams) middleware.Responde
 		  posts.is_edited        AS "isEdited",
 		  posts.id,
 		  posts.parent,
-		  forums.slug            AS forum,
-		  users.nickname         AS author
-		FROM
-		  posts
-		  JOIN users ON (posts.author_id = users.id)
-		  JOIN forums ON (posts.forum_id = forums.id)
-		  JOIN threads ON (posts.thread_id = threads.id)
+		  posts.forum_slug            AS forum,
+		  posts.author_nickname         AS author
+		FROM  posts
 		WHERE posts.thread_id = (SELECT id from in_thread_id) `)
 		if params.Since != nil {
 			utils.GenStrictCompareCondition(queryBuff, "AND ", isDesc, "path", "(SELECT path FROM since_parent)")
 		}
-		queryBuff.WriteString(" ORDER BY (posts.path, posts.id) ")
+		queryBuff.WriteString(" ORDER BY posts.path ")
+		queryBuff.WriteString(sortOrder)
+		queryBuff.WriteString(" ,posts.id ")
 		queryBuff.WriteString(sortOrder)
 		queryBuff.WriteString(" LIMIT $1")
 		db.Select(&posts, queryBuff.String(), params.Limit, params.SlugOrID, params.Since)
@@ -473,12 +468,12 @@ func ThreadsGetPosts(params operations.ThreadGetPostsParams) middleware.Responde
 		  posts.is_edited as "isEdited",
 		  posts.id,
 		  posts.parent,
-		  forums.slug            AS forum,
-		  users.nickname         AS author
+		  posts.forum_slug            AS forum,
+		  posts.author_nickname         AS author
 		FROM
 		  (SELECT
 			 posts.id,
-			 dense_rank() OVER ( ORDER BY get_root(posts.path) `)
+			 dense_rank() OVER ( ORDER BY posts.root `)
 		queryBuff.WriteString(sortOrder)
 		queryBuff.WriteString(`) as dr
 			FROM posts
@@ -488,15 +483,13 @@ func ThreadsGetPosts(params operations.ThreadGetPostsParams) middleware.Responde
 			utils.GenStrictCompareCondition(queryBuff, " AND", isDesc, "path", "(SELECT path FROM since_parent)")
 		}
 		queryBuff.WriteString(`) as p
-		  JOIN posts ON (posts.id = p.id)
-		  JOIN users ON (posts.author_id = users.id)
-		  JOIN forums ON (posts.forum_id = forums.id)
-		  JOIN threads ON (posts.thread_id = threads.id)
-		  WHERE posts.thread_id = (SELECT id from in_thread_id)`)
+		  JOIN posts ON (posts.id = p.id)`)
 		if params.Limit != nil {
-			queryBuff.WriteString(` AND p.dr <= $3`)
+			queryBuff.WriteString(` WHERE p.dr <= $3`)
 		}
-		queryBuff.WriteString(` ORDER BY (posts.path, posts.id) `)
+		queryBuff.WriteString(` ORDER BY posts.path `)
+		queryBuff.WriteString(sortOrder)
+		queryBuff.WriteString(` ,posts.id `)
 		queryBuff.WriteString(sortOrder)
 		db.Select(&posts, queryBuff.String(),
 			params.Since, params.SlugOrID, params.Limit)

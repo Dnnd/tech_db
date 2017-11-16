@@ -27,15 +27,21 @@ CREATE TABLE IF NOT EXISTS threads (
 );
 
 CREATE TABLE IF NOT EXISTS posts (
-  id        SERIAL PRIMARY KEY,
-  forum_id  INTEGER REFERENCES forums (id),
-  thread_id INTEGER REFERENCES threads (id),
-  author_id INTEGER REFERENCES users (id),
-  created   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  is_edited BOOLEAN                  NOT NULL DEFAULT FALSE,
-  message   TEXT                     NOT NULL,
-  parent    INTEGER                  NOT NULL,
-  path      INTEGER []               NOT NULL
+  id              SERIAL PRIMARY KEY,
+  forum_id        INTEGER REFERENCES forums (id),
+  thread_id       INTEGER REFERENCES threads (id),
+  author_id       INTEGER REFERENCES users (id),
+  created         TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  is_edited       BOOLEAN                  NOT NULL DEFAULT FALSE,
+  message         TEXT                     NOT NULL,
+  --tree
+  parent          INTEGER                  NOT NULL,
+  root            INTEGER                  NOT NULL,
+  path            INTEGER []               NOT NULL,
+  -- denorm
+  author_nickname VARCHAR(255)             NOT NULL,
+  forum_slug      VARCHAR(255)             NOT NULL
+
 );
 
 CREATE TABLE IF NOT EXISTS votes (

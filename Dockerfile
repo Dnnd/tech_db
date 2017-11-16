@@ -17,6 +17,11 @@ RUN cat /etc/postgresql/10/main/pg_hba.conf >> /etc/postgresql/10/main/pg_hba.co
 RUN mv /etc/postgresql/10/main/pg_hba.conf.new /etc/postgresql/10/main/pg_hba.conf
 RUN echo "unix_socket_directories='/tmp,/var/run/postgresql_sock'" >> /etc/postgresql/10/main/postgresql.conf
 RUN echo "synchronous_commit = off" >>  /etc/postgresql/10/main/postgresql.conf
+RUN echo "shared_buffers = 256MB" >>  /etc/postgresql/10/main/postgresql.conf
+RUN echo "effective_cache_size = 750MB" >>  /etc/postgresql/10/main/postgresql.conf
+RUN echo "fsync = off" >>  /etc/postgresql/10/main/postgresql.conf
+RUN echo "full_page_writes = off" >>  /etc/postgresql/10/main/postgresql.conf
+
 USER root
 RUN wget https://storage.googleapis.com/golang/go1.9.1.linux-amd64.tar.gz
 
