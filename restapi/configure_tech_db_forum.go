@@ -24,7 +24,7 @@ func configureFlags(api *operations.TechDbForumAPI) {
 
 func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 	// configure the api here
-	timer := time.NewTimer(time.Minute * 5.5)
+	timer := time.NewTimer(time.Minute * 6)
 	go func() {
 		<-timer.C
 		database.DB.Exec("VACUUM ANALYZE;")
