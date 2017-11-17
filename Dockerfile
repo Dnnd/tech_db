@@ -21,7 +21,6 @@ RUN echo "shared_buffers = 256MB" >>  /etc/postgresql/10/main/postgresql.conf
 RUN echo "effective_cache_size = 750MB" >>  /etc/postgresql/10/main/postgresql.conf
 RUN echo "fsync = off" >>  /etc/postgresql/10/main/postgresql.conf
 RUN echo "full_page_writes = off" >>  /etc/postgresql/10/main/postgresql.conf
-RUN echo "autovacuum_freeze_table_age  = 0" >>  /etc/postgresql/10/main/postgresql.conf
 
 USER root
 RUN wget https://storage.googleapis.com/golang/go1.9.1.linux-amd64.tar.gz

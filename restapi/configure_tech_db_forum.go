@@ -27,7 +27,7 @@ func configureAPI(api *operations.TechDbForumAPI) http.Handler {
 	timer := time.NewTimer(time.Minute * 6)
 	go func() {
 		<-timer.C
-		database.DB.Exec("VACUUM ANALYZE;")
+		database.DB.Exec("VACUUM ANALYZE")
 	}()
 
 	api.ServeError = errors.ServeError
